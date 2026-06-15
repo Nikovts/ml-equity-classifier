@@ -82,15 +82,17 @@ def fetch_and_process_fundamentals(ticker_symbol: str, price_df: pd.DataFrame) -
         # Sort index chronologically (oldest to newest) to satisfy pd.merge_asof
         fundamentals = fundamentals.sort_index(ascending=True)
         
-        # Point-in-time merge logic
+      # Point-in-time merge logic
         daily_df = price_df.copy()
-        # Force the daily stock data index to match the exact same nanosecond precision
         daily_df.index = pd.to_datetime(daily_df.index).tz_localize(None).astype('datetime64[ns]')
         
+        # 1. Match fundamentals to every single trading day using a look-behind merge
         merged_df = pd.merge_asof(daily_df, fundamentals, left_index=True, right_index=True, direction='backward')
-        merged_df = merged_df.ffill().dropna(subset=['net_income'])
-
-
+        
+        # 2. CRITICAL CHANGE: Forward-fill values for trading days between quarterly reports, 
+        # and backward-fill the oldest metrics to protect the early 2022 rows from being deleted.
+        merged_df = merged_df.ffill().bfill()
+        
         # Output Multiple Generations
         shares_calc = merged_df['shares_outstanding'].fillna(1e9)
         market_cap = merged_df['asset_close'] * shares_calc
@@ -101,7 +103,12 @@ def fetch_and_process_fundamentals(ticker_symbol: str, price_df: pd.DataFrame) -
         
         output_cols = list(price_df.columns) + ['ratio_pe', 'ratio_pb', 'ratio_dcf_value']
         print("Success: Real dynamic fundamental traits extracted successfully!")
-        return merged_df[output_cols]
+        
+        # Double check that we are returning ALL original daily rows
+        final_fundamental_output = merged_df[output_cols]
+        print(f"Verify Fundamental Output Rows: {final_fundamental_output.shape[0]}")
+        
+        return final_fundamental_output
         
     except Exception as e:
         print(f"\n⚠️ FUNDAMENTAL ENGINE WARNING: {e}")
