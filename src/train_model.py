@@ -8,11 +8,11 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV, StratifiedKFold
 from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
 
-# ==========================================
-# CONFIGURATION PANEL: TOGGLE ENGINE HERE
-# Options: 'logistic_regression' or 'random_forest'
-# ==========================================
-MODEL_TYPE = 'random_forest'
+# =====================================================================
+# CONFIGURATION PANEL: TOGGLE ENGINE & TARGET LAYERS HERE
+# =====================================================================
+MODEL_TYPE = 'random_forest'  # Options: 'logistic_regression' or 'random_forest'
+COLLAPSE_TO_BINARY = True    # True: High-Conviction Binary, False: Baseline 3-Class
 
 def inject_advanced_features(X):
     """
@@ -44,8 +44,23 @@ def train_optimized_pipeline():
     train_df = pd.read_csv("data/train_matrix.csv", index_col="Date", parse_dates=True)
     test_df = pd.read_csv("data/test_matrix.csv", index_col="Date", parse_dates=True)
     
-    y_train = train_df['target']
-    y_test = test_df['target']
+    # ------------------------------------------------------------------
+    # DYNAMIC TARGET CONFIGURATION LAYER
+    # ------------------------------------------------------------------
+    if COLLAPSE_TO_BINARY:
+        print("💡 ARCHITECTURE CONFIG: Collapsing targets to BINARY [Skip (0) vs Buy (1)]")
+        y_train = train_df['target'].apply(lambda x: 1 if x == 1 else 0)
+        y_test = test_df['target'].apply(lambda x: 1 if x == 1 else 0)
+        eval_labels = [0, 1]
+        eval_names = ['Skip (0)', 'Buy (1)']
+        report_title = "Binary Optimization"
+    else:
+        print("⚖️ ARCHITECTURE CONFIG: Retaining BASELINE 3-CLASS [Sell (-1), Hold (0), Buy (1)]")
+        y_train = train_df['target']
+        y_test = test_df['target']
+        eval_labels = [-1, 0, 1]
+        eval_names = ['Sell (-1)', 'Hold (0)', 'Buy (1)']
+        report_title = "Multi-Class Baseline"
     
     # DROPPING CAPM_BETA HERE to strip away the systemic bubble panic bias
     cols_to_drop = ['target', 'asset_close', 'spy_close', 'vix_close', 'asset_volume', 'capm_beta']
@@ -113,14 +128,14 @@ def train_optimized_pipeline():
     # Evaluate performance
     y_pred = best_pipeline.predict(X_test)
     
-    print("\n=== PIPELINE ENGINE PERFORMANCE METRICS ===")
-    print(f"Overall Multi-Class Accuracy: {accuracy_score(y_test, y_pred):.4f}")
+    print(f"\n=== PIPELINE ENGINE PERFORMANCE METRICS ({report_title.upper()}) ===")
+    print(f"Overall Accuracy: {accuracy_score(y_test, y_pred):.4f}")
     
     print("\nDetailed Financial Classification Report:")
-    print(classification_report(y_test, y_pred, labels=[-1, 0, 1], target_names=['Sell (-1)', 'Hold (0)', 'Buy (1)'], zero_division=0))
+    print(classification_report(y_test, y_pred, labels=eval_labels, target_names=eval_names, zero_division=0))
     
     print("Confusion Matrix:")
-    print(confusion_matrix(y_test, y_pred, labels=[-1, 0, 1]))
+    print(confusion_matrix(y_test, y_pred, labels=eval_labels))
     
     # Trace features kept by RFE step
     rfe_step = best_pipeline.named_steps['rfe']
