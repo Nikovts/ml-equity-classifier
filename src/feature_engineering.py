@@ -4,10 +4,11 @@ import sys
 
 def calculate_features(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Transforms raw asset, benchmark, and VIX prices into structured mathematical features.
-    Isolates idiosyncratic asset returns using a rolling CAPM regression framework.
+    Transforms raw asset, benchmark, VIX prices, and fundamental inputs into 
+    structured mathematical features. Infuses advanced velocity, direction, 
+    and volatility squeeze mechanics chronologically.
     """
-    # Create a copy to protect original data integrity
+    # Create a copy to protect original data integrity and guarantee time order
     feat_df = df.copy().sort_index()
     
     print("Beginning mathematical feature engineering extraction...")
@@ -23,62 +24,88 @@ def calculate_features(df: pd.DataFrame) -> pd.DataFrame:
     # ----------------------------------------------------
     window = 60  # 60 trading days (~3 calendar months) to capture structural regimes
     
-    # Calculate rolling covariance and market variance
     rolling_cov = feat_df['asset_ret'].rolling(window=window).cov(feat_df['spy_ret'])
     rolling_market_var = feat_df['spy_ret'].rolling(window=window).var()
     
-    # Beta calculation: Cov(X, Y) / Var(Y)
     feat_df['capm_beta'] = rolling_cov / rolling_market_var
     
-    # Alpha calculation: Mean(Y) - Beta * Mean(X)
     rolling_asset_mean = feat_df['asset_ret'].rolling(window=window).mean()
     rolling_spy_mean = feat_df['spy_ret'].rolling(window=window).mean()
     feat_df['capm_alpha'] = rolling_asset_mean - (feat_df['capm_beta'] * rolling_spy_mean)
     
-    # Residual Return calculation: e = R_asset - (Alpha + Beta * R_spy)
-    # This acts as our clean proxy for company-specific news events
     feat_df['residual_return'] = feat_df['asset_ret'] - (feat_df['capm_alpha'] + feat_df['capm_beta'] * feat_df['spy_ret'])
     
     # ----------------------------------------------------
-    # 3. Technical Indicators
+    # 3. Technical Horizons & Structural Crossovers
     # ----------------------------------------------------
-    # Trend: Multi-horizon historical log returns
     feat_df['trend_20d'] = feat_df['asset_ret'].rolling(20).sum()
     feat_df['trend_60d'] = feat_df['asset_ret'].rolling(60).sum()
+    
+    # Trend Structural Crossovers
+    feat_df['feature_trend_bullish_cross'] = (feat_df['trend_20d'] > feat_df['trend_60d']).astype(int)
+    feat_df['feature_trend_bearish_cross'] = (feat_df['trend_20d'] < feat_df['trend_60d']).astype(int)
     
     # Momentum: Standard 14-day Relative Strength Index (RSI)
     delta = feat_df['asset_close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / (loss + 1e-9)  # Avoid division by zero
+    rs = gain / (loss + 1e-9)
     feat_df['momentum_rsi'] = 100 - (100 / (1 + rs))
     
-    # Volatility: 20-day rolling standard deviation of returns
-    feat_df['volatility_20d'] = feat_df['asset_ret'].rolling(window=20).std()
+    # RSI Logic Boundaries
+    feat_df['feature_rsi_oversold'] = (feat_df['momentum_rsi'] < 30).astype(int)
+    feat_df['feature_rsi_overbought'] = (feat_df['momentum_rsi'] > 70).astype(int)
     
-    # Volume: Ratio of current volume to its 20-day moving average
+    # Volatility & Volume Profiles
+    feat_df['volatility_20d'] = feat_df['asset_ret'].rolling(window=20).std()
     feat_df['volume_ratio'] = feat_df['asset_volume'] / feat_df['asset_volume'].rolling(window=20).mean()
     
     # ----------------------------------------------------
-    # 4. Macro Risk Metrics
+    # 4. VOLATILITY COMPRESSION & ENERGY METRICS (New)
+    # ----------------------------------------------------
+    # Bollinger Band Width (Squeeze vs. Overextension)
+    bb_sma = feat_df['asset_close'].rolling(window=20).mean()
+    bb_std = feat_df['asset_close'].rolling(window=20).std()
+    feat_df['feature_bb_width'] = (4 * bb_std) / bb_sma
+    
+    # Volatility Ratio tracking structural breakout expansions
+    feat_df['feature_volatility_ratio'] = feat_df['asset_ret'].rolling(window=14).std()
+
+    # ----------------------------------------------------
+    # 5. FIRST DERIVATIVES & SYSTEM SPEED (Velocities)
+    # ----------------------------------------------------
+    # Trend Velocities (Is the speed expanding or decaying?)
+    feat_df['feature_trend_20d_velocity'] = feat_df['trend_20d'].diff(5)
+    feat_df['feature_trend_60d_velocity'] = feat_df['trend_60d'].diff(5)
+    
+    # Categorical Velocities (Current Market Slope Direction)
+    feat_df['feature_trend_20d_dir'] = (feat_df['feature_trend_20d_velocity'] > 0).astype(int)
+    feat_df['feature_trend_60d_dir'] = (feat_df['feature_trend_60d_velocity'] > 0).astype(int)
+    
+    # Core Valuation Shift Velocities (Calculated over the 5-day delta)
+    features_to_differentiate = ['momentum_rsi', 'ratio_pe', 'ratio_pb', 'ratio_dcf_value']
+    for col in features_to_differentiate:
+        if col in feat_df.columns:
+            feat_df[f'feature_{col}_velocity_5d'] = feat_df[col].diff(5)
+
+    # ----------------------------------------------------
+    # 6. Macro Risk Metrics
     # ----------------------------------------------------
     feat_df['macro_vix'] = feat_df['vix_close']
     feat_df['vix_change_5d'] = feat_df['vix_close'].pct_change(periods=5)
-    
-    # Drop rows containing NaNs generated by rolling windows to clean the training space
+    feat_df['feature_value_disconnect'] = feat_df['ratio_pe'] * feat_df['ratio_dcf_value']
+    # Clean up NaNs generated by rolling windows at the absolute beginning of history
     feat_df = feat_df.dropna()
     
     print(f"Feature engineering complete. Total feature columns generated: {feat_df.shape[1] - df.shape[1]}")
     return feat_df
 
 if __name__ == "__main__":
-    # Add the src directory to sys.path to allow imports of local modules
     sys.path.append('/content/ml-equity-classifier/src/')
-    # Local unit test logic
     from data_fetcher import fetch_market_data
     raw_data = fetch_market_data("AAPL", "2016-01-01", "2026-01-01")
     
     if not raw_data.empty:
         processed_data = calculate_features(raw_data)
         print("\nProcessed Features preview (Tail):")
-        print(processed_data[['capm_beta', 'residual_return', 'momentum_rsi', 'macro_vix']].tail())
+        print(processed_data[['capm_beta', 'feature_bb_width', 'feature_trend_20d_velocity', 'macro_vix']].tail())
